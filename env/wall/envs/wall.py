@@ -23,6 +23,9 @@ class DotWall(gym.Env):
         fix_wall_location: Optional[int] = None,
         fix_door_location: Optional[int] = None,
         device="cpu",
+        bg_color=(255, 255, 255),
+        bg_color2=None,
+        bg_type='solid',
     ):
         super().__init__()
         self.wall_config = wall_config
@@ -34,6 +37,9 @@ class DotWall(gym.Env):
         self.padding = self.dot_std * 2
         self.border_padding = wall_config.border_wall_loc - 1 + self.padding
         self.rng = rng or np.random.default_rng()
+        self.bg_color = bg_color
+        self.bg_color2 = bg_color2
+        self.bg_type = bg_type
         if wall_config is not None:
             layouts, other_layouts = generate_wall_layouts(wall_config)
             self.layouts = layouts
@@ -49,16 +55,36 @@ class DotWall(gym.Env):
     
     def channels_to_img(self, wall_img, dot_img):
         h, w = wall_img.shape
-        rgb_image = torch.ones((3, h, w), dtype=torch.uint8).to(self.device) * 255
-        
+
+        if self.bg_type == 'gradient' and self.bg_color2 is not None:
+            t = torch.linspace(0, 1, w, device=self.device).unsqueeze(0).expand(h, -1)
+            rgb_image = torch.stack([
+                (self.bg_color[c] * (1 - t) + self.bg_color2[c] * t).to(torch.uint8)
+                for c in range(3)
+            ])
+        elif self.bg_type == 'checker' and self.bg_color2 is not None:
+            checker_size = 8
+            cx = (torch.arange(w, device=self.device) // checker_size) % 2
+            cy = (torch.arange(h, device=self.device) // checker_size) % 2
+            checker_mask = (cx.unsqueeze(0) + cy.unsqueeze(1)) % 2
+            rgb_image = torch.stack([
+                torch.where(checker_mask == 0,
+                            torch.tensor(self.bg_color[c], dtype=torch.uint8, device=self.device),
+                            torch.tensor(self.bg_color2[c], dtype=torch.uint8, device=self.device))
+                for c in range(3)
+            ])
+        else:
+            rgb_image = torch.zeros((3, h, w), dtype=torch.uint8, device=self.device)
+            for c in range(3):
+                rgb_image[c] = self.bg_color[c]
+
         wall_mask = wall_img == 1
-        rgb_image[:, wall_mask] = torch.tensor([0, 0, 0], dtype=torch.uint8).to(self.device).unsqueeze(1)
-        
-        no_wall_mask = wall_img == 0  # Mask where there are no walls
+        rgb_image[:, wall_mask] = 0
+
+        no_wall_mask = wall_img == 0
         red_intensity = (dot_img * 255).to(torch.uint8)
-        
-        rgb_image[1, no_wall_mask] = 255 - red_intensity[no_wall_mask]  # Green channel reduced
-        rgb_image[2, no_wall_mask] = 255 - red_intensity[no_wall_mask]  # Blue channel reduced
+        rgb_image[1, no_wall_mask] = (rgb_image[1, no_wall_mask].int() - red_intensity[no_wall_mask].int()).clamp(0, 255).to(torch.uint8)
+        rgb_image[2, no_wall_mask] = (rgb_image[2, no_wall_mask].int() - red_intensity[no_wall_mask].int()).clamp(0, 255).to(torch.uint8)
         return rgb_image
 
 

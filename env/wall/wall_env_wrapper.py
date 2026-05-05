@@ -50,10 +50,46 @@ DEFAULT_CFG = WallDatasetConfig(
 
 resize_transform = transforms.Resize((224, 224))
 TRANSFORM = resize_transform
-    
+
+WALL_BACKGROUND_CONFIGS = {
+    'default': {
+        'bg_color': (255, 255, 255),
+        'bg_type': 'solid',
+    },
+    'slight_change': {
+        'bg_color': (235, 230, 225),
+        'bg_color2': (210, 205, 200),
+        'bg_type': 'checker',
+    },
+    'color': {
+        'bg_color': (180, 210, 240),
+        'bg_color2': (150, 190, 225),
+        'bg_type': 'gradient',
+    },
+    'large_color': {
+        'bg_color': (235, 235, 115),
+        'bg_color2': (200, 200, 65),
+        'bg_type': 'checker',
+    },
+    'large_color_gradient': {
+        'bg_color': (46, 13, 89),
+        'bg_color2': (128, 56, 140),
+        'bg_type': 'gradient',
+    },
+}
+
 class WallEnvWrapper(DotWall):
-    def __init__(self, rng=42, wall_config=DEFAULT_CFG, fix_wall=True, cross_wall=False, fix_wall_location=32, fix_door_location=10, device='cpu', **kwargs):
-        super().__init__(rng, wall_config, fix_wall, cross_wall, fix_wall_location=fix_wall_location, fix_door_location=fix_door_location, device=device,**kwargs)
+    def __init__(self, rng=42, wall_config=DEFAULT_CFG, fix_wall=True, cross_wall=False,
+                 fix_wall_location=32, fix_door_location=10, device='cpu',
+                 background='default', **kwargs):
+        bg_cfg = WALL_BACKGROUND_CONFIGS.get(background, WALL_BACKGROUND_CONFIGS['default'])
+        super().__init__(rng, wall_config, fix_wall, cross_wall,
+                         fix_wall_location=fix_wall_location, fix_door_location=fix_door_location,
+                         device=device,
+                         bg_color=bg_cfg['bg_color'],
+                         bg_color2=bg_cfg.get('bg_color2'),
+                         bg_type=bg_cfg['bg_type'],
+                         **kwargs)
         self.action_dim = ENV_ACTION_DIM
         self.transform = TRANSFORM
 
