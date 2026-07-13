@@ -13,6 +13,26 @@ def build_mlp(input_dim, hidden_dim, output_dim, num_hidden_layers):
     return nn.Sequential(*layers)
 
 
+class InverseDynamicsMLP(nn.Module):
+    """Maps concat(z_t, z_{t+1}) -> action (BiSimBad bisim-id-id)."""
+
+    def __init__(self, latent_dim, action_dim, hidden_dim=512):
+        super().__init__()
+        in_dim = latent_dim + latent_dim
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, action_dim),
+        )
+
+    def forward(self, z, z_next):
+        return self.net(torch.cat([z, z_next], dim=-1))
+
+
 def build_patch_encoder(input_dim, hidden_dim, output_dim, num_hidden_layers=1):
     layers = [nn.Linear(input_dim, hidden_dim), nn.GELU()]
     for _ in range(num_hidden_layers - 1):
@@ -44,6 +64,8 @@ class BisimModel(nn.Module):
             hidden_dim=256,
             num_hidden_layers=2,
             action_dim=10,
+            wm_action_dim=None,
+            train_bisim_id_id=False,
             bypass_dinov2=False,
             img_size=224,
             num_patches=196,  # number of output patches
@@ -54,6 +76,8 @@ class BisimModel(nn.Module):
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         self.action_dim = action_dim
+        self.wm_action_dim = wm_action_dim if wm_action_dim is not None else action_dim
+        self.train_bisim_id_id = train_bisim_id_id
         self.bypass_dinov2 = bypass_dinov2
         self.img_size = img_size
         self.num_patches = num_patches
@@ -97,6 +121,14 @@ class BisimModel(nn.Module):
 
         # aggregator: per-patch score -> softmax weights
         self.reward_aggregator = nn.Linear(self.patch_dim, 1)
+
+        self.inverse_dynamics = None
+        if self.train_bisim_id_id:
+            self.inverse_dynamics = InverseDynamicsMLP(
+                latent_dim=self.patch_dim,
+                action_dim=self.wm_action_dim,
+                hidden_dim=512,
+            )
 
         self._initialize_weights()
         self.PCAMatrix = []
@@ -280,6 +312,18 @@ class BisimModel(nn.Module):
         distances = torch.sqrt(distances + 1e-8)  # (b,)
         return distances
 
+    def pool_latents(self, z_bisim):
+        """Mean-pool patch latents: (b, t, p, d) -> (b, t, d)."""
+        return z_bisim.mean(dim=2)
+
+    def predict_inverse(self, z_bisim, next_z_bisim):
+        """Predict WM actions from pooled bisim latents: (b, t, a_wm)."""
+        if self.inverse_dynamics is None:
+            raise RuntimeError("inverse_dynamics is not enabled on BisimModel")
+        z_pool = self.pool_latents(z_bisim)
+        next_z_pool = self.pool_latents(next_z_bisim)
+        return self.inverse_dynamics(z_pool, next_z_pool)
+
     def compute_covariance_regularization(self, z_bisim, next_z_bisim,
                                           var_target: float = 1.0,
                                           eps: float = 1e-6):
@@ -458,7 +502,8 @@ class BisimModel(nn.Module):
     def calc_bisim_loss(self, z_bisim, z_bisim2, reward, reward2, next_z_bisim, next_z_bisim2, epoch, discount=0.99,
                         train_w_reward_loss=True, var_loss_coef: float = 1.0, PCA1_loss_target: float = 0.01,
                         VC_target: float = 1.0,
-                        num_pcs: int = 10, PCAloss_epoch: int = 50):
+                        num_pcs: int = 10, PCAloss_epoch: int = 50,
+                        id_lambda: float = 0.0, use_id_target: bool = False):
         """
         Calculate bisimulation loss
         bisimulation metric: d(s1,s2) = |r(s1) - r(s2)| + γ · d(P(s1), P(s2)) + Variance Loss + Covariance Regularization
@@ -507,7 +552,23 @@ class BisimModel(nn.Module):
         else:
             target_bisimilarity = 0 * r_dist + discount * transition_dist
 
+        inv_l1 = torch.zeros_like(z_dist)
+        if (
+            use_id_target
+            and id_lambda > 0
+            and self.inverse_dynamics is not None
+        ):
+            with torch.no_grad():
+                z1 = z_bisim.detach()
+                z2 = z_bisim2.detach()
+                nz1 = next_z_bisim.detach()
+                nz2 = next_z_bisim2.detach()
+                inv_i = self.predict_inverse(z1, nz1)
+                inv_j = self.predict_inverse(z2, nz2)
+                inv_l1 = (inv_i - inv_j).abs().sum(dim=-1)
+            target_bisimilarity = target_bisimilarity + id_lambda * inv_l1
+
         # 6. final bisim loss
         bisim_loss = (z_dist - target_bisimilarity).pow(2) + var_loss + cov_reg
 
-        return bisim_loss, z_dist, r_dist, discount * transition_dist, var_loss, cov_reg
+        return bisim_loss, z_dist, r_dist, discount * transition_dist, var_loss, cov_reg, inv_l1

@@ -342,6 +342,8 @@ class Trainer:
                     latent_dim=self.cfg.get('bisim_latent_dim', 8),
                     hidden_dim=self.cfg.get('bisim_hidden_dim', 256),
                     action_dim=self.cfg.action_emb_dim,
+                    wm_action_dim=self.datasets["train"].action_dim,
+                    train_bisim_id_id=self.cfg.model.get('train_bisim_id_id', False),
                     bypass_dinov2=self.cfg.model.get('bypass_dinov2', False),
                     img_size=self.cfg.img_size,
                     num_patches=num_patches,
@@ -391,6 +393,9 @@ class Trainer:
             bypass_dinov2=self.cfg.model.get('bypass_dinov2', False),
             bisim_memory_buffer_size=self.cfg.get('bisim_memory_buffer_size', 0),
             bisim_comparison_size=self.cfg.get('bisim_comparison_size', 20),
+            train_bisim_id_id=self.cfg.model.get('train_bisim_id_id', False),
+            id_lambda=self.cfg.get('id_lambda', 0.0),
+            id_omega=self.cfg.get('id_omega', 0.0),
         )
 
     def init_optimizers(self):
@@ -876,7 +881,8 @@ class Trainer:
                     z_loss: {epoch_log.get('train_z_loss', 0):.4f}  z_proprio_loss: {epoch_log.get('train_z_proprio_loss', 0):.4f} \
                     Bisim z_dist: {epoch_log.get('train_bisim_z_dist', 0):.4f}  Bisim r_dist: {epoch_log.get('train_bisim_r_dist', 0):.4f}  \
                     Variance loss: {epoch_log.get('train_bisim_var_loss', 0):.4f}  Transition_dist (Covariance): {epoch_log.get('train_bisim_transition_dist', 0):.4f} \
-                    Covariance loss: {epoch_log.get('train_bisim_cov_reg', 0):.4f}"
+                    Covariance loss: {epoch_log.get('train_bisim_cov_reg', 0):.4f}  \
+                    ID loss: {epoch_log.get('train_id_loss', 0):.4f}  ID target L1: {epoch_log.get('train_bisim_id_l1', 0):.4f}"
             log.info(bisim_msg)
 
         if 'val_bisim_loss' in epoch_log:
@@ -884,7 +890,8 @@ class Trainer:
                     z_loss: {epoch_log.get('val_z_loss', 0):.4f}  z_proprio_loss: {epoch_log.get('val_z_proprio_loss', 0):.4f} \
                     Bisim z_dist: {epoch_log.get('val_bisim_z_dist', 0):.4f}  Bisim r_dist: {epoch_log.get('val_bisim_r_dist', 0):.4f}  \
                     Variance loss: {epoch_log.get('val_bisim_var_loss', 0):.4f}  Transition_dist (Covariance): {epoch_log.get('val_bisim_transition_dist', 0):.4f} \
-                    Covariance loss: {epoch_log.get('val_bisim_cov_reg', 0):.4f}"
+                    Covariance loss: {epoch_log.get('val_bisim_cov_reg', 0):.4f}  \
+                    ID loss: {epoch_log.get('val_id_loss', 0):.4f}  ID target L1: {epoch_log.get('val_bisim_id_l1', 0):.4f}"
             log.info(val_bisim_msg)
 
         append_loss_to_csv(epoch_log, "training_loss_log.csv")

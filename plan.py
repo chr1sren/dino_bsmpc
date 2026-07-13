@@ -428,6 +428,9 @@ def load_model(model_ckpt, train_cfg, num_action_repeat, device):
             "bypass_dinov2": train_cfg.model.get('bypass_dinov2', False),
             "bisim_memory_buffer_size": train_cfg.get('bisim_memory_buffer_size', 0),
             "bisim_comparison_size": train_cfg.get('bisim_comparison_size', 20),
+            "train_bisim_id_id": train_cfg.model.get('train_bisim_id_id', False),
+            "id_lambda": train_cfg.get('id_lambda', 0.0),
+            "id_omega": train_cfg.get('id_omega', 0.0),
         })
 
     model = hydra.utils.instantiate(
@@ -496,8 +499,8 @@ def planning_main(cfg_dict):
         if background:
             env_kwargs["background"] = background
 
-    # use dummy vector env for wall and deformable envs
-    if model_cfg.env.name == "wall" or model_cfg.env.name == "deformable_env":
+    # use serial vector env for wall, deformable, and ManiSkill (SAPIEN/Vulkan)
+    if model_cfg.env.name in ("wall", "deformable_env", "pickcube"):
         from env.serial_vector_env import SerialVectorEnv
         env = SerialVectorEnv(
             [

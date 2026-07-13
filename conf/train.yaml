@@ -6,7 +6,6 @@ defaults:
   - proprio_encoder: proprio
   - decoder: vqvae
   - predictor: vit
-  - override hydra/launcher: submitit_slurm
 
 # base path to save model outputs. Checkpoints will be saved to ${ckpt_base_path}/outputs.
 ckpt_base_path: ./ # put absolute path here
@@ -17,17 +16,6 @@ hydra:
   sweep:
     dir: ${ckpt_base_path}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
-  launcher:
-    submitit_folder: ${hydra.sweep.dir}/.submitit/%j
-    nodes: 1
-    tasks_per_node: 1
-    cpus_per_task: 8
-    mem_gb: 512
-    gres: "gpu:h100:1"
-    timeout_min: 2880
-    setup: ["export DEBUGVAR=$(scontrol show hostnames $SLURM_JOB_NODELIST)",
-            export MASTER_ADDR="$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)",
-            "export MASTER_PORT=$(for port in $(shuf -i 30000-65500 -n 20); do if [[ $(netstat -tupln 2>&1 | grep $port | wc -l) -eq 0 ]] ; then echo $port; break; fi; done;)",]
 
 training:
   seed: 0
@@ -69,6 +57,10 @@ PCAloss_epoch: 2000
 bisim_memory_buffer_size: 1000  # Size of memory buffer for cross-batch bisimulation (0 = disabled)
 bisim_comparison_size: 200  # Total number of states to compare in bisimulation learning
 
+# Inverse-dynamics enhanced bisimulation (BiSimBad bisim-id-id)
+id_lambda: 0.1   # ID distance in detached D_target
+id_omega: 0.1    # MSE(I(z,z'), a) supervision weight
+
 num_hist: 3
 num_pred: 1 # only supports 1
 has_predictor: True # set this to False for only training a decoder
@@ -85,6 +77,7 @@ model:
   train_predictor: True
   train_decoder: True
   train_bisim: True  # Control whether to train the bisimulation model
+  train_bisim_id_id: False  # Enable inverse-dynamics bisim (BiSimBad bisim-id-id)
   bypass_dinov2: False  # If True, train obs -> bisim directly, bypassing DinoV2
 
   train_w_std_loss: True

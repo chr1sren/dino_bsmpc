@@ -67,3 +67,10 @@ register(
     max_episode_steps=300,
     reward_threshold=1.0,
 )
+
+register(
+    id="pickcube",
+    entry_point="env.maniskill.pickcube_wrapper:PickCubeWrapper",
+    max_episode_steps=50,
+    reward_threshold=1.0,
+)

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision import transforms
 from einops import rearrange, repeat
 import numpy as np
@@ -39,6 +40,9 @@ class VWorldModel(nn.Module):
             train_decoder=True,
             train_w_std_loss=True,
             train_w_reward_loss=True,
+            train_bisim_id_id=False,
+            id_lambda=0.0,
+            id_omega=0.0,
             accelerate=False,
     ):
         super().__init__()
@@ -140,6 +144,9 @@ class VWorldModel(nn.Module):
         self.PCAloss_epoch = PCAloss_epoch
         self.train_w_std_loss = train_w_std_loss
         self.train_w_reward_loss = train_w_reward_loss
+        self.train_bisim_id_id = train_bisim_id_id
+        self.id_lambda = id_lambda
+        self.id_omega = id_omega
         self.accelerate = accelerate
 
     def train(self, mode=True):
@@ -240,6 +247,46 @@ class VWorldModel(nn.Module):
             'rewards': self.bisim_memory_rewards[indices]
         }
 
+    def _call_bisim_calc_loss(
+        self, z_bisim, z_bisim2, reward, reward2, next_z_bisim, next_z_bisim2, epoch, discount
+    ):
+        id_kwargs = dict(
+            id_lambda=self.id_lambda,
+            use_id_target=self.train_bisim_id_id and self.id_lambda > 0,
+        )
+        common_kwargs = dict(
+            epoch=epoch,
+            discount=discount,
+            train_w_reward_loss=self.train_w_reward_loss,
+            var_loss_coef=self.var_loss_coef,
+            PCA1_loss_target=self.PCA1_loss_target,
+            VC_target=self.VC_target,
+            num_pcs=self.num_pcs,
+            PCAloss_epoch=self.PCAloss_epoch,
+            **id_kwargs,
+        )
+        if hasattr(self.bisim_model, "module"):
+            return self.bisim_model.module.calc_bisim_loss(
+                z_bisim, z_bisim2, reward, reward2,
+                next_z_bisim, next_z_bisim2, **common_kwargs
+            )
+        return self.bisim_model.calc_bisim_loss(
+            z_bisim, z_bisim2, reward, reward2,
+            next_z_bisim, next_z_bisim2, **common_kwargs
+        )
+
+    def calc_id_supervision_loss(self, z_bisim, next_z_bisim, act):
+        """MSE(I(z, z'), a) with gradient flow into bisim encoder."""
+        if not self.has_bisim or not self.train_bisim_id_id or self.id_omega <= 0:
+            return torch.tensor(0.0, device=z_bisim.device)
+        if self.bisim_model is None:
+            return torch.tensor(0.0, device=z_bisim.device)
+        bisim = self.bisim_model.module if hasattr(self.bisim_model, "module") else self.bisim_model
+        if bisim.inverse_dynamics is None:
+            return torch.tensor(0.0, device=z_bisim.device)
+        inv_pred = bisim.predict_inverse(z_bisim, next_z_bisim)
+        return F.mse_loss(inv_pred, act)
+
     def calc_bisim_loss(self, z_bisim, next_z_bisim, action_emb, epoch, reward=None, discount=0.99):
         """
         Calculate bisimulation loss
@@ -288,21 +335,18 @@ class VWorldModel(nn.Module):
                 reward2 = reward_combined[perm]
 
                 if hasattr(self.bisim_model, "module"):
-                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.module.calc_bisim_loss(
+                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1 = self._call_bisim_calc_loss(
                         z_bisim_combined, z_bisim2, reward_combined, reward2,
-                        next_z_bisim_combined, next_z_bisim2, epoch, discount, self.train_w_reward_loss,
-                        self.var_loss_coef,
-                        self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
+                        next_z_bisim_combined, next_z_bisim2, epoch, discount
                     )
                 else:
-                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.calc_bisim_loss(
+                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1 = self._call_bisim_calc_loss(
                         z_bisim_combined, z_bisim2, reward_combined, reward2,
-                        next_z_bisim_combined, next_z_bisim2, epoch, discount, self.train_w_reward_loss,
-                        self.var_loss_coef,
-                        self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
+                        next_z_bisim_combined, next_z_bisim2, epoch, discount
                     )
 
                 bisim_loss = bisim_loss[:batch_size]
+                inv_l1 = inv_l1[:batch_size]
             else:
                 # fallback to batch_size comparison
                 perm = torch.randperm(batch_size, device=z_bisim.device)
@@ -310,18 +354,10 @@ class VWorldModel(nn.Module):
                 next_z_bisim2 = next_z_bisim[perm]
                 reward2 = reward[perm]
 
-                if hasattr(self.bisim_model, "module"):
-                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.module.calc_bisim_loss(
-                        z_bisim, z_bisim2, reward, reward2,
-                        next_z_bisim, next_z_bisim2, epoch, discount, self.train_w_reward_loss, self.var_loss_coef,
-                        self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
-                    )
-                else:
-                    bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.calc_bisim_loss(
-                        z_bisim, z_bisim2, reward, reward2,
-                        next_z_bisim, next_z_bisim2, epoch, discount, self.train_w_reward_loss, self.var_loss_coef,
-                        self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
-                    )
+                bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1 = self._call_bisim_calc_loss(
+                    z_bisim, z_bisim2, reward, reward2,
+                    next_z_bisim, next_z_bisim2, epoch, discount
+                )
         else:
             # memory buffer disabled or eval mode
             perm = torch.randperm(batch_size, device=z_bisim.device)
@@ -329,23 +365,15 @@ class VWorldModel(nn.Module):
             next_z_bisim2 = next_z_bisim[perm]
             reward2 = reward[perm]
 
-            if hasattr(self.bisim_model, "module"):
-                bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.module.calc_bisim_loss(
-                    z_bisim, z_bisim2, reward, reward2,
-                    next_z_bisim, next_z_bisim2, epoch, discount, self.train_w_reward_loss, self.var_loss_coef,
-                    self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
-                )
-            else:
-                bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.bisim_model.calc_bisim_loss(
-                    z_bisim, z_bisim2, reward, reward2,
-                    next_z_bisim, next_z_bisim2, epoch, discount, self.train_w_reward_loss, self.var_loss_coef,
-                    self.PCA1_loss_target, self.VC_target, self.num_pcs, self.PCAloss_epoch
-                )
+            bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1 = self._call_bisim_calc_loss(
+                z_bisim, z_bisim2, reward, reward2,
+                next_z_bisim, next_z_bisim2, epoch, discount
+            )
 
         if self.training:
             self.update_memory_buffer(z_bisim, next_z_bisim, action_emb, reward)
 
-        return bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg
+        return bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1
 
     def encode(self, obs, act):
         """
@@ -517,7 +545,7 @@ class VWorldModel(nn.Module):
                 z_obs_tgt, _ = self.separate_emb(z_tgt)
                 action_emb = self.encode_act(act[:, : self.num_hist])
 
-                bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg = self.calc_bisim_loss(
+                bisim_loss, z_dist, r_dist, transition_dist, var_loss, cov_reg, inv_l1 = self.calc_bisim_loss(
                     z_obs_src["visual"],
                     z_obs_tgt["visual"],
                     action_emb,
@@ -526,7 +554,16 @@ class VWorldModel(nn.Module):
                 bisim_loss = bisim_loss.mean()
                 loss = loss + self.bisim_coef * bisim_loss
 
+                id_loss = self.calc_id_supervision_loss(
+                    z_obs_src["visual"],
+                    z_obs_tgt["visual"],
+                    act[:, : self.num_hist],
+                )
+                loss = loss + self.id_omega * id_loss
+
                 loss_components["bisim_loss"] = bisim_loss
+                loss_components["id_loss"] = id_loss
+                loss_components["bisim_id_l1"] = inv_l1.mean()
                 loss_components["bisim_z_dist"] = z_dist
                 loss_components["bisim_r_dist"] = r_dist
                 loss_components["bisim_transition_dist"] = transition_dist
