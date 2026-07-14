@@ -3,9 +3,9 @@
 # 预计 1–2 小时（取决于 GPU/MPS 与数据量）；数据不足时先用合成数据。
 #
 # 用法:
-#   export DATASET_DIR=/path/to/data
-#   bash scripts/smoke_train.sh                  # baseline
+#   bash scripts/smoke_train.sh                  # baseline，数据默认写到 ./data
 #   VARIANT=id_id bash scripts/smoke_train.sh    # bisim-id-id
+#   export DATASET_DIR=$HOME/datasets            # 可选：真实数据根目录
 #
 # 可调环境变量:
 #   EPOCHS=40 BATCH_SIZE=8 IMG_SIZE=128 FRAMESKIP=5
@@ -14,7 +14,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
-export DATASET_DIR="${DATASET_DIR:-$(pwd)/data}"
+DEFAULT_DATASET_DIR="$(pwd)/data"
+
+# 忽略文档占位路径 /path/to/data，否则会 PermissionError: '/path'
+if [[ -z "${DATASET_DIR:-}" || "${DATASET_DIR}" == "/path/to/data"* || "${DATASET_DIR}" == *"path/to"* ]]; then
+  export DATASET_DIR="${DEFAULT_DATASET_DIR}"
+  echo "[smoke] DATASET_DIR unset/placeholder; using ${DATASET_DIR}"
+fi
 export WANDB_MODE="${WANDB_MODE:-disabled}"
 
 EPOCHS="${EPOCHS:-40}"
@@ -25,12 +31,13 @@ VARIANT="${VARIANT:-baseline}"   # baseline | id_id
 DATA_PATH="${DATASET_DIR}/pickcube_v1"
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
-  PYTHON="/opt/miniconda3/envs/csc420/bin/python"
+  PYTHON="python"
 fi
 
 # 准备数据
 if [[ ! -f "${DATA_PATH}/train/states.pth" ]]; then
   echo "[smoke] no data at ${DATA_PATH}; generating synthetic fallback"
+  mkdir -p "${DATA_PATH}"
   $PYTHON scripts/generate_synthetic_pickcube_data.py --out "${DATA_PATH}" --n_episodes 20
 fi
 
