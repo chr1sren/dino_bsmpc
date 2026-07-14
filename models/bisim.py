@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import json
 import numpy as np
+import os
 
 
 def build_mlp(input_dim, hidden_dim, output_dim, num_hidden_layers):
@@ -226,26 +227,29 @@ class BisimModel(nn.Module):
 
             event = "bisim_encode_dinov2_patches"
 
-        self.log_bisim({
-            "event": event,
-            "input_shape": list(input_data.shape),
-            "output_shape": list(z_bisim.shape),
-            "bypass_dinov2": self.bypass_dinov2,
-            "num_patches": self.num_patches,
-            "patch_dim": self.patch_dim,
-            "input_stats": {
-                "mean": float(input_data.mean().item()),
-                "std": float(input_data.std().item()),
-                "min": float(input_data.min().item()),
-                "max": float(input_data.max().item()),
-            },
-            "output_stats": {
-                "mean": float(z_bisim.mean().item()),
-                "std": float(z_bisim.std().item()),
-                "min": float(z_bisim.min().item()),
-                "max": float(z_bisim.max().item()),
-            },
-        })
+        # Disabled by default: writing full tensor stats every encode makes
+        # openloop eval appear hung and floods bisim_log.json.
+        if os.environ.get("BISIM_DEBUG_LOG", "0") == "1":
+            self.log_bisim({
+                "event": event,
+                "input_shape": list(input_data.shape),
+                "output_shape": list(z_bisim.shape),
+                "bypass_dinov2": self.bypass_dinov2,
+                "num_patches": self.num_patches,
+                "patch_dim": self.patch_dim,
+                "input_stats": {
+                    "mean": float(input_data.mean().item()),
+                    "std": float(input_data.std().item()),
+                    "min": float(input_data.min().item()),
+                    "max": float(input_data.max().item()),
+                },
+                "output_stats": {
+                    "mean": float(z_bisim.mean().item()),
+                    "std": float(z_bisim.std().item()),
+                    "min": float(z_bisim.min().item()),
+                    "max": float(z_bisim.max().item()),
+                },
+            })
 
         return z_bisim
 

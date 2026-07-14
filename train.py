@@ -647,6 +647,7 @@ class Trainer:
         self.model.eval()
         if len(self.train_traj_dset) > 0 and self.cfg.has_predictor:
             with torch.no_grad():
+                log.info("Running openloop rollout (no progress bar; may take a while)...")
                 train_rollout_logs = self.openloop_rollout(
                     self.train_traj_dset, mode="train"
                 )
@@ -659,6 +660,7 @@ class Trainer:
                     f"val_{k}": [v] for k, v in val_rollout_logs.items()
                 }
                 self.logs_update(val_rollout_logs)
+                log.info("Openloop rollout done; starting validation batches...")
 
         self.accelerator.wait_for_everyone()
         for i, data in enumerate(
@@ -754,30 +756,47 @@ class Trainer:
 
         # rollout with both num_hist and 1 frame as context
         num_past = [(self.cfg.num_hist, ""), (1, "_1framestart")]
+        min_len_needed = min_horizon * self.cfg.frameskip + 1
+        max_sample_attempts = max(50, len(dset) * 5)
 
         # sample traj
         for idx in range(num_rollout):
             valid_traj = False
-            while not valid_traj:
+            obs = act = state = None
+            start = 0
+            horizon = min_horizon
+            for _attempt in range(max_sample_attempts):
                 traj_idx = np.random.randint(0, len(dset))
                 obs, act, state, _ = dset[traj_idx]
                 act = act.to(self.device)
+                T = obs["visual"].shape[0]
                 if rand_start_end:
-                    if obs["visual"].shape[0] > min_horizon * self.cfg.frameskip + 1:
-                        start = np.random.randint(
-                            0,
-                            obs["visual"].shape[0] - min_horizon * self.cfg.frameskip - 1,
-                        )
+                    if T > min_len_needed:
+                        start = np.random.randint(0, T - min_len_needed)
                     else:
                         start = 0
-                    max_horizon = (obs["visual"].shape[0] - start - 1) // self.cfg.frameskip
+                    max_horizon = (T - start - 1) // self.cfg.frameskip
                     if max_horizon > min_horizon:
                         valid_traj = True
                         horizon = np.random.randint(min_horizon, max_horizon + 1)
+                        break
                 else:
                     valid_traj = True
                     start = 0
-                    horizon = (obs["visual"].shape[0] - 1) // self.cfg.frameskip
+                    horizon = max(1, (T - 1) // self.cfg.frameskip)
+                    break
+
+            if not valid_traj:
+                log.warning(
+                    "openloop_rollout: skipped sample %d/%d (need traj_len > %d "
+                    "with frameskip=%d, num_hist=%d; dataset may be too short)",
+                    idx + 1,
+                    num_rollout,
+                    min_len_needed,
+                    self.cfg.frameskip,
+                    self.cfg.num_hist,
+                )
+                continue
 
             for k in obs.keys():
                 obs[k] = obs[k][
@@ -849,6 +868,9 @@ class Trainer:
                         obs["visual"].shape[0],
                         f"{plotting_dir}/e{self.epoch}_{mode}_{idx}{postfix}.png",
                     )
+        if not logs:
+            log.warning("openloop_rollout: no valid trajectories; returning empty logs")
+            return {}
         logs = {
             key: sum(values) / len(values) for key, values in logs.items() if values
         }
