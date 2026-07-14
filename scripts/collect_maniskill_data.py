@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import env  # noqa: F401
+# Import wrappers directly — avoid gym.make registration side-effects.
 from env.maniskill.pickcube_wrapper import PickCubeWrapper
 from env.maniskill.pushcube_wrapper import PushCubeWrapper
 from env.maniskill.state_utils import extract_pickcube_state
