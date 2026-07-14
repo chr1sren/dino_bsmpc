@@ -410,13 +410,19 @@ def main():
             f"success={traj['env_info'].get('success', False)} source={source}"
         )
 
-    env.close()
-
     n_val = max(1, int(args.n_episodes * args.val_ratio))
     n_train = args.n_episodes - n_val
     out_root = Path(out)
     save_split(trajectories[:n_train], out_root, "train")
     save_split(trajectories[n_train:], out_root, "val")
+
+    # SAPIEN/ManiSkill GPU teardown often segfaults in atexit; close best-effort then hard-exit.
+    try:
+        env.close()
+    except Exception as exc:
+        print(f"warning: env.close() failed ({exc})", flush=True)
+    print(f"[{args.task}] collection finished -> {out_root}", flush=True)
+    os._exit(0)
 
 
 if __name__ == "__main__":

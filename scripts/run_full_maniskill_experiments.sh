@@ -62,9 +62,11 @@ for TASK in ${TASKS}; do
 
   if [[ "${SKIP_COLLECT}" != "1" ]]; then
     if [[ -f "${DATA_PATH}/train/states.pth" && -f "${DATA_PATH}/val/states.pth" ]]; then
-      echo "[${TASK}] data already exists at ${DATA_PATH} (set SKIP_COLLECT=0 and rm to redo)"
+      echo "[${TASK}] data already exists at ${DATA_PATH} (rm to re-collect)"
     else
       echo "[${TASK}] collecting ${N_EPISODES} episodes -> ${DATA_PATH}"
+      # ManiSkill/SAPIEN often segfaults on process teardown after a successful save.
+      set +e
       ${PYTHON} scripts/collect_maniskill_data.py \
         --task "${TASK}" \
         --out "${DATA_PATH}" \
@@ -73,6 +75,15 @@ for TASK in ${TASKS}; do
         --image_size "${IMG_SIZE}" \
         --random_fraction 0.2 \
         --motion_plan_fraction 0.3
+      collect_rc=$?
+      set -e
+      if [[ ! -f "${DATA_PATH}/train/states.pth" || ! -f "${DATA_PATH}/val/states.pth" ]]; then
+        echo "[${TASK}] ERROR: collect failed (exit=${collect_rc}) and data missing" >&2
+        exit 1
+      fi
+      if [[ ${collect_rc} -ne 0 ]]; then
+        echo "[${TASK}] warning: collect exited ${collect_rc} but data looks complete; continuing"
+      fi
     fi
   else
     echo "[${TASK}] SKIP_COLLECT=1, using ${DATA_PATH}"
