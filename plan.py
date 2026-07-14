@@ -500,7 +500,7 @@ def planning_main(cfg_dict):
             env_kwargs["background"] = background
 
     # use serial vector env for wall, deformable, and ManiSkill (SAPIEN/Vulkan)
-    if model_cfg.env.name in ("wall", "deformable_env", "pickcube"):
+    if model_cfg.env.name in ("wall", "deformable_env", "pickcube", "pushcube"):
         from env.serial_vector_env import SerialVectorEnv
         env = SerialVectorEnv(
             [

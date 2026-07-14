@@ -9,9 +9,11 @@ def append_loss_to_csv(epoch_log, csv_path="training_log.csv"):
         "train_z_proprio_loss", "train_standard_l2_loss",
         "train_bisim_loss", "train_bisim_z_dist", "train_bisim_r_dist",
         "train_bisim_var_loss", "train_bisim_transition_dist", "train_bisim_cov_reg",
+        "train_id_loss", "train_bisim_id_l1",
         "val_z_proprio_loss", "val_standard_l2_loss",
         "val_bisim_loss", "val_bisim_z_dist", "val_bisim_r_dist",
-        "val_bisim_var_loss", "val_bisim_transition_dist", "val_bisim_cov_reg"
+        "val_bisim_var_loss", "val_bisim_transition_dist", "val_bisim_cov_reg",
+        "val_id_loss", "val_bisim_id_l1",
     ]
 
     # Check if file exists
@@ -38,6 +40,8 @@ def append_loss_to_csv(epoch_log, csv_path="training_log.csv"):
             "train_bisim_var_loss": epoch_log.get("train_bisim_var_loss"),
             "train_bisim_transition_dist": epoch_log.get("train_bisim_transition_dist"),
             "train_bisim_cov_reg": epoch_log.get("train_bisim_cov_reg"),
+            "train_id_loss": epoch_log.get("train_id_loss"),
+            "train_bisim_id_l1": epoch_log.get("train_bisim_id_l1"),
 
             "val_z_proprio_loss": epoch_log.get("val_z_proprio_loss"),
             "val_standard_l2_loss": epoch_log.get("val_standard_l2_loss"),
@@ -45,6 +49,8 @@ def append_loss_to_csv(epoch_log, csv_path="training_log.csv"):
             "val_bisim_z_dist": epoch_log.get("val_bisim_z_dist"),
             "val_bisim_r_dist": epoch_log.get("val_bisim_r_dist"),
             "val_bisim_var_loss": epoch_log.get("val_bisim_var_loss"),
-            "val_bisim_transition_dist": epoch_log.get("val_bisim_transition_dist"), 
+            "val_bisim_transition_dist": epoch_log.get("val_bisim_transition_dist"),
             "val_bisim_cov_reg": epoch_log.get("val_bisim_cov_reg"),
+            "val_id_loss": epoch_log.get("val_id_loss"),
+            "val_bisim_id_l1": epoch_log.get("val_bisim_id_l1"),
         })

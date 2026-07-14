@@ -74,3 +74,10 @@ register(
     max_episode_steps=50,
     reward_threshold=1.0,
 )
+
+register(
+    id="pushcube",
+    entry_point="env.maniskill.pushcube_wrapper:PushCubeWrapper",
+    max_episode_steps=50,
+    reward_threshold=1.0,
+)
