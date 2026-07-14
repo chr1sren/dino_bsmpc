@@ -15,10 +15,37 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Import wrappers directly — avoid gym.make registration side-effects.
-from env.maniskill.pickcube_wrapper import PickCubeWrapper
-from env.maniskill.pushcube_wrapper import PushCubeWrapper
-from env.maniskill.state_utils import extract_pickcube_state
+
+def _load_maniskill_module(mod_name, file_name):
+    """Load env.maniskill.* without executing env/__init__.py (mujoco_py)."""
+    import importlib.util
+    import types
+
+    if "env" not in sys.modules:
+        pkg = types.ModuleType("env")
+        pkg.__path__ = [str(ROOT / "env")]
+        sys.modules["env"] = pkg
+    if "env.maniskill" not in sys.modules:
+        sub = types.ModuleType("env.maniskill")
+        sub.__path__ = [str(ROOT / "env" / "maniskill")]
+        sys.modules["env.maniskill"] = sub
+
+    path = ROOT / "env" / "maniskill" / file_name
+    full_name = f"env.maniskill.{mod_name}"
+    spec = importlib.util.spec_from_file_location(full_name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[full_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_state_utils = _load_maniskill_module("state_utils", "state_utils.py")
+_pixel_env = _load_maniskill_module("pixel_env", "pixel_env.py")  # noqa: F841 — needed by wrappers
+_pick = _load_maniskill_module("pickcube_wrapper", "pickcube_wrapper.py")
+_push = _load_maniskill_module("pushcube_wrapper", "pushcube_wrapper.py")
+PickCubeWrapper = _pick.PickCubeWrapper
+PushCubeWrapper = _push.PushCubeWrapper
+extract_pickcube_state = _state_utils.extract_pickcube_state
 
 
 TASKS = {
