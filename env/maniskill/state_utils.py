@@ -1,33 +1,49 @@
-"""Semantic state extraction for ManiSkill PickCube."""
+"""Semantic state extraction for ManiSkill PickCube / PushCube."""
 
 import numpy as np
 
 
+def _to_numpy(value):
+    """Convert torch/sapien tensors (incl. CUDA) or arrays to float32 numpy."""
+    if value is None:
+        return None
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    elif hasattr(value, "cpu") and not isinstance(value, np.ndarray):
+        try:
+            value = value.cpu().numpy()
+        except Exception:
+            value = np.asarray(value)
+    elif not isinstance(value, np.ndarray):
+        value = np.asarray(value)
+    return np.asarray(value, dtype=np.float32)
+
+
 def _pose_p(pose):
-    p = pose.p if hasattr(pose, 'p') else pose
-    arr = np.asarray(p, dtype=np.float32).reshape(-1)
+    p = pose.p if hasattr(pose, "p") else pose
+    arr = _to_numpy(p).reshape(-1)
     return arr[:3]
 
 
 def _pose_q(pose):
-    if hasattr(pose, 'q'):
+    if hasattr(pose, "q"):
         q = pose.q
     else:
         return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    arr = np.asarray(q, dtype=np.float32).reshape(-1)
+    arr = _to_numpy(q).reshape(-1)
     if arr.shape[0] == 4:
         return arr
     return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 def _gripper_opening(base):
-    agent = getattr(base, 'agent', None)
+    agent = getattr(base, "agent", None)
     if agent is None:
         return np.array([0.0], dtype=np.float32)
-    for attr in ('gripper_state', 'qpos'):
+    for attr in ("gripper_state", "qpos"):
         if hasattr(agent, attr):
             val = getattr(agent, attr)
-            arr = np.asarray(val, dtype=np.float32).reshape(-1)
+            arr = _to_numpy(val).reshape(-1)
             if arr.size > 0:
                 return np.array([float(arr[-1])], dtype=np.float32)
     return np.array([0.0], dtype=np.float32)
@@ -43,17 +59,17 @@ def extract_pickcube_state(env_unwrapped):
     tcp_pos = _pose_p(tcp_pose)
     tcp_quat = _pose_q(tcp_pose)
 
-    cube = getattr(base, 'cube', None) or getattr(base, 'obj', None)
+    cube = getattr(base, "cube", None) or getattr(base, "obj", None)
     if cube is None:
         obj_pos = np.zeros(3, dtype=np.float32)
     else:
         obj_pos = _pose_p(cube.pose)
 
-    goal_site = getattr(base, 'goal_site', None)
+    goal_site = getattr(base, "goal_site", None)
     if goal_site is not None:
         goal_pos = _pose_p(goal_site.pose)
-    elif hasattr(base, 'goal_pos'):
-        goal_pos = np.asarray(base.goal_pos, dtype=np.float32).reshape(-1)[:3]
+    elif hasattr(base, "goal_pos"):
+        goal_pos = _to_numpy(base.goal_pos).reshape(-1)[:3]
     else:
         goal_pos = np.zeros(3, dtype=np.float32)
 
@@ -64,7 +80,7 @@ def extract_pickcube_state(env_unwrapped):
 
 def state_to_proprio(state):
     """Proprio for WM: tcp_pos + gripper opening."""
-    state = np.asarray(state, dtype=np.float32)
+    state = _to_numpy(state)
     return np.concatenate([state[:3], state[-1:]], axis=0).astype(np.float32)
 
 
