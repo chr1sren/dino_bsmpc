@@ -297,30 +297,38 @@ def save_split(trajectories, out_dir, split_name):
     env_infos = []
 
     for i, traj in enumerate(trajectories):
+        # obs/state/proprio length is T; actions are T-1 steps — pad last action with 0
+        # so tensors share seq_length (same convention as pusht / point_maze).
         T = len(traj["visuals"])
         seq_lengths.append(T)
-        states_list.append(torch.from_numpy(traj["states"]))
-        proprios_list.append(torch.from_numpy(traj["proprios"]))
-        if traj["actions"].shape[0] > 0:
-            actions_list.append(torch.from_numpy(traj["actions"]))
+        states_list.append(torch.from_numpy(traj["states"][:T]))
+        proprios_list.append(torch.from_numpy(traj["proprios"][:T]))
+        acts = traj["actions"]
+        if acts.ndim == 1:
+            acts = acts.reshape(-1, 4)
+        action_dim = int(acts.shape[-1]) if acts.size else 4
+        if acts.shape[0] < T:
+            pad = np.zeros((T - acts.shape[0], action_dim), dtype=np.float32)
+            acts = np.concatenate([acts.astype(np.float32), pad], axis=0)
         else:
-            actions_list.append(torch.zeros(0, 4))
+            acts = acts[:T].astype(np.float32)
+        actions_list.append(torch.from_numpy(acts))
 
         video_path = obs_dir / f"episode_{i:03d}.mp4"
-        imageio.mimsave(video_path, traj["visuals"], fps=10)
+        imageio.mimsave(video_path, traj["visuals"][:T], fps=10)
         env_infos.append(traj["env_info"])
 
     max_t = max(seq_lengths)
     state_dim = states_list[0].shape[-1]
-    action_dim = 4
+    action_dim = actions_list[0].shape[-1]
     proprio_dim = proprios_list[0].shape[-1]
 
     states = torch.zeros(len(trajectories), max_t, state_dim)
     proprios = torch.zeros(len(trajectories), max_t, proprio_dim)
     actions = torch.zeros(len(trajectories), max_t, action_dim)
     for i, length in enumerate(seq_lengths):
-        states[i, :length] = states_list[i]
-        proprios[i, :length] = proprios_list[i]
+        states[i, :length] = states_list[i][:length]
+        proprios[i, :length] = proprios_list[i][:length]
         actions[i, :length] = actions_list[i][:length]
 
     torch.save(states, out_dir / "states.pth")
