@@ -15,6 +15,9 @@
 #   EXPERIMENTS="bisim_baseline bisim_id_id"   # add ablations if needed
 #   SKIP_COLLECT=0|1
 #   ABLACTIONS=0|1   # if 1, also run id_target_only + id_supervision_only
+#   ID_LAMBDA=0.05   # ID-target weight for id_id / id_target_only
+#   ID_OMEGA=0.1     # ID-supervision weight
+#   SKIP_PLOT=0|1    # if 0 (default), generate eval plots for all tasks at the end
 #   PYTHON=python
 
 set -euo pipefail
@@ -36,6 +39,9 @@ NUM_HIST="${NUM_HIST:-3}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 SKIP_COLLECT="${SKIP_COLLECT:-0}"
 ABLACTIONS="${ABLACTIONS:-0}"
+ID_LAMBDA="${ID_LAMBDA:-0.05}"
+ID_OMEGA="${ID_OMEGA:-0.1}"
+SKIP_PLOT="${SKIP_PLOT:-0}"
 export DATASET_DIR
 export WANDB_MODE="${WANDB_MODE:-disabled}"
 
@@ -107,9 +113,18 @@ for TASK in ${TASKS}; do
     --frameskip "${FRAMESKIP}" \
     --num_hist "${NUM_HIST}" \
     --num_workers "${NUM_WORKERS}" \
+    --id_lambda "${ID_LAMBDA}" \
+    --id_omega "${ID_OMEGA}" \
     --experiments ${EXPERIMENTS}
 
   echo "[${TASK}] done. Summary: ${OUT_DIR}/comparison_summary.csv"
 done
+
+if [[ "${SKIP_PLOT}" != "1" ]]; then
+  echo "=== generating eval plots for all tasks under ${CKPT_BASE} ==="
+  ${PYTHON} scripts/plot_maniskill_training.py \
+    --outputs_dir "${CKPT_BASE}" \
+    --out_dir "${CKPT_BASE}/plots" || echo "warning: plotting failed (matplotlib installed?)"
+fi
 
 echo "=== all tasks finished ==="

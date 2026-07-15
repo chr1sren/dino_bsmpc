@@ -19,12 +19,12 @@ EXPERIMENTS = {
     },
     "bisim_id_id": {
         "model.train_bisim_id_id": "true",
-        "id_lambda": "0.01",
+        "id_lambda": "0.05",
         "id_omega": "0.1",
     },
     "bisim_id_target_only": {
         "model.train_bisim_id_id": "true",
-        "id_lambda": "0.01",
+        "id_lambda": "0.05",
         "id_omega": "0.0",
     },
     "bisim_id_supervision_only": {
@@ -115,6 +115,10 @@ def main():
     parser.add_argument("--frameskip", type=int, default=5)
     parser.add_argument("--num_hist", type=int, default=3)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--id_lambda", type=float, default=None,
+                        help="Override id_lambda for ID experiments (default: per-experiment value).")
+    parser.add_argument("--id_omega", type=float, default=None,
+                        help="Override id_omega for ID experiments (default: per-experiment value).")
     parser.add_argument(
         "--experiments",
         nargs="*",
@@ -122,6 +126,13 @@ def main():
         help="Default: baseline + id_id. Pass all four keys for full ablations.",
     )
     args = parser.parse_args()
+
+    # Optional CLI overrides: only touch experiments that already use the term (>0).
+    for cfg in EXPERIMENTS.values():
+        if args.id_lambda is not None and float(cfg["id_lambda"]) > 0:
+            cfg["id_lambda"] = str(args.id_lambda)
+        if args.id_omega is not None and float(cfg["id_omega"]) > 0:
+            cfg["id_omega"] = str(args.id_omega)
 
     data_dir = Path(args.data_dir or f"data/{args.task}_v1").resolve()
     out_dir = Path(args.out_dir or f"outputs/{args.task}_comparison").resolve()
