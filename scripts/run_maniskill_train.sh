@@ -34,10 +34,10 @@ case "${VARIANT}" in
     ID_FLAGS=(model.train_bisim_id_id=false id_lambda=0.0 id_omega=0.0)
     ;;
   id_id)
-    ID_FLAGS=(model.train_bisim_id_id=true id_lambda=0.1 id_omega=0.1)
+    ID_FLAGS=(model.train_bisim_id_id=true id_lambda=0.01 id_omega=0.1)
     ;;
   id_target_only)
-    ID_FLAGS=(model.train_bisim_id_id=true id_lambda=0.1 id_omega=0.0)
+    ID_FLAGS=(model.train_bisim_id_id=true id_lambda=0.01 id_omega=0.0)
     ;;
   id_supervision_only)
     ID_FLAGS=(model.train_bisim_id_id=true id_lambda=0.0 id_omega=0.1)

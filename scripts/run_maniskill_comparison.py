@@ -19,12 +19,12 @@ EXPERIMENTS = {
     },
     "bisim_id_id": {
         "model.train_bisim_id_id": "true",
-        "id_lambda": "0.1",
+        "id_lambda": "0.01",
         "id_omega": "0.1",
     },
     "bisim_id_target_only": {
         "model.train_bisim_id_id": "true",
-        "id_lambda": "0.1",
+        "id_lambda": "0.01",
         "id_omega": "0.0",
     },
     "bisim_id_supervision_only": {

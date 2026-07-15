@@ -569,7 +569,9 @@ class BisimModel(nn.Module):
                 nz2 = next_z_bisim2.detach()
                 inv_i = self.predict_inverse(z1, nz1)
                 inv_j = self.predict_inverse(z2, nz2)
-                inv_l1 = (inv_i - inv_j).abs().sum(dim=-1)
+                # mean over action dims (was sum) so the ID target term stays on a
+                # comparable scale to r_dist / transition_dist instead of dominating.
+                inv_l1 = (inv_i - inv_j).abs().mean(dim=-1)
             target_bisimilarity = target_bisimilarity + id_lambda * inv_l1
 
         # 6. final bisim loss

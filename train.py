@@ -204,6 +204,17 @@ class Trainer:
                     ckpt[k] = self.accelerator.unwrap_model(obj)
                 else:
                     ckpt[k] = obj
+            keep_only_final = self.cfg.training.get("keep_only_final_ckpt", True)
+            if keep_only_final:
+                # Drop previous per-epoch checkpoints so only the newest (== final) remains.
+                import glob as _glob
+                for old in _glob.glob("checkpoints/model_*.pth"):
+                    if os.path.basename(old) == "model_latest.pth":
+                        continue
+                    try:
+                        os.remove(old)
+                    except OSError:
+                        pass
             torch.save(ckpt, "checkpoints/model_latest.pth")
             torch.save(ckpt, f"checkpoints/model_{self.epoch}.pth")
             log.info("Saved model to {}".format(os.getcwd()))

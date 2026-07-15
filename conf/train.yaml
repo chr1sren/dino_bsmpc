@@ -22,6 +22,7 @@ training:
   epochs: 100
   batch_size: 40 # should >= nodes * tasks_per_node
   save_every_x_epoch: 1
+  keep_only_final_ckpt: true  # delete per-epoch checkpoints, keep only the newest (final)
   reconstruct_every_x_batch: 500
   num_reconstruct_samples: 6
   encoder_lr: 5e-7
@@ -58,7 +59,7 @@ bisim_memory_buffer_size: 1000  # Size of memory buffer for cross-batch bisimula
 bisim_comparison_size: 200  # Total number of states to compare in bisimulation learning
 
 # Inverse-dynamics enhanced bisimulation (BiSimBad bisim-id-id)
-id_lambda: 0.1   # ID distance in detached D_target
+id_lambda: 0.05   # ID distance in detached D_target (lowered from 0.1; inv_l1 now mean-reduced)
 id_omega: 0.1    # MSE(I(z,z'), a) supervision weight
 
 num_hist: 3
