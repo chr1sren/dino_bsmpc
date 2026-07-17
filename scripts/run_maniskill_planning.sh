@@ -57,20 +57,22 @@ _extract() {
 }
 
 _find_ckpt_epoch() {
-  # prints epoch tag to use with model_${tag}.pth, or empty if none
+  # Prefer: requested tag -> latest -> final -> highest model_N.pth
   local ckpt_dir="$1" want="$2"
   if [[ -f "${ckpt_dir}/model_${want}.pth" ]]; then
     echo "${want}"
     return
   fi
-  if [[ -f "${ckpt_dir}/model_latest.pth" ]]; then
-    echo "latest"
-    return
-  fi
+  for tag in latest final; do
+    if [[ -f "${ckpt_dir}/model_${tag}.pth" ]]; then
+      echo "${tag}"
+      return
+    fi
+  done
   local alt
   alt="$(ls -1 "${ckpt_dir}"/model_*.pth 2>/dev/null | sort -V | tail -1 || true)"
   if [[ -n "${alt}" ]]; then
-    basename "${alt}" | sed -E 's/model_([0-9]+)\.pth/\1/'
+    basename "${alt}" | sed -E 's/model_(.+)\.pth/\1/'
   fi
 }
 

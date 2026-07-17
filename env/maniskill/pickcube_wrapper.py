@@ -54,6 +54,15 @@ class PickCubeWrapper:
         self._episode_seed = seed
         self._goal_pos = None
         self._sim_state = None
+        # gym.make() assigns env.unwrapped.spec = spec; our wrapper is not a gym.Env
+        # subclass, so expose these attributes so registration works.
+        self.spec = None
+        self.metadata = {"render.modes": []}
+        self.reward_range = (-float("inf"), float("inf"))
+
+    @property
+    def unwrapped(self):
+        return self
 
     @property
     def observation_space(self):
