@@ -38,7 +38,7 @@ objective:
 
 planner:
   _target_: planning.mpc.MPCPlanner
-  max_iter: null
+  max_iter: 10   # hard stop; null = loop forever until success (dangerous when SR=0)
   n_taken_actions: 5
   sub_planner:
     target: planning.cem.CEMPlanner

@@ -78,7 +78,7 @@ _find_ckpt_epoch() {
 
 mkdir -p "${OUT_ROOT}"
 SUMMARY="${OUT_ROOT}/planning_summary.csv"
-echo "task,exp,seed,model_name,returncode,success_rate,mean_place_err,plan_dir" > "${SUMMARY}"
+echo "task,exp,seed,model_name,returncode,success_rate,mean_place_err,diag_hint,wm_vis_mse,wm_pro_mse,place_err_delta,cube_disp,tcp_disp,plan_dir" > "${SUMMARY}"
 
 echo "=== ManiSkill planning eval ==="
 echo "CKPT_BASE=${CKPT_BASE}"
@@ -144,9 +144,24 @@ for TASK in ${TASKS}; do
       [[ -z "${SR}" ]] && SR=nan
       [[ -z "${PE}" ]] && PE=nan
 
-      echo "${TASK},${EXP},${SEED},${MODEL_NAME},${rc},${SR},${PE},${PLAN_DIR}" >> "${SUMMARY}"
-      echo "    rc=${rc} success_rate=${SR} mean_place_err=${PE}"
+      # Prefer the last *_diag.json written in the plan dir (has triage fields).
+      DIAG_HINT=nan; WM_VIS=nan; WM_PRO=nan; PLACE_D=nan; CUBE_D=nan; TCP_D=nan
+      DIAG_FILE="$(ls -1t "${PLAN_DIR}"/*_diag.json 2>/dev/null | head -1 || true)"
+      if [[ -n "${DIAG_FILE}" && -f "${DIAG_FILE}" ]]; then
+        DIAG_HINT="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('diag_hint','nan'))" 2>/dev/null || echo nan)"
+        WM_VIS="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('wm_openloop_visual_mse','nan'))" 2>/dev/null || echo nan)"
+        WM_PRO="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('wm_openloop_proprio_mse','nan'))" 2>/dev/null || echo nan)"
+        PLACE_D="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('place_err_delta','nan'))" 2>/dev/null || echo nan)"
+        CUBE_D="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('cube_disp','nan'))" 2>/dev/null || echo nan)"
+        TCP_D="$(${PYTHON} -c "import json;d=json.load(open('${DIAG_FILE}'));print(d.get('tcp_disp','nan'))" 2>/dev/null || echo nan)"
+      fi
+
+      echo "${TASK},${EXP},${SEED},${MODEL_NAME},${rc},${SR},${PE},${DIAG_HINT},${WM_VIS},${WM_PRO},${PLACE_D},${CUBE_D},${TCP_D},${PLAN_DIR}" >> "${SUMMARY}"
+      echo "    rc=${rc} success_rate=${SR} place_err=${PE}"
+      echo "    diag=${DIAG_HINT}  wm_vis_mse=${WM_VIS} wm_pro_mse=${WM_PRO} placeΔ=${PLACE_D} cube=${CUBE_D} tcp=${TCP_D}"
       echo "    log: ${PLAN_LOG}"
+      # videos live next to hydra cwd (= PLAN_DIR)
+      echo "    videos: ${PLAN_DIR}/*_env_*.mp4"
 
       if [[ ${rc} -ne 0 ]]; then
         echo "    ---- last 40 lines of log ----"
