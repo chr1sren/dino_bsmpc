@@ -22,12 +22,12 @@ model_name: null
 model_epoch: latest
 
 seed: 99
-n_evals: 10
+n_evals: 1
 # dset: sample init/goal from val trajectories (recommended for ManiSkill)
 # random_state: sample random env resets (harder; goal site is episode-specific)
 goal_source: dset
 goal_H: 5
-n_plot_samples: 4
+n_plot_samples: 1
 debug_dset_init: False
 
 objective:
