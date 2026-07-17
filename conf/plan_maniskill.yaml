@@ -1,0 +1,51 @@
+defaults:
+  - _self_
+
+# Local ManiSkill planning (no SLURM/submitit).
+# Checkpoints are loaded from:
+#   ${ckpt_base_path}/outputs/${model_name}/checkpoints/model_${model_epoch}.pth
+#
+# Example:
+#   ckpt_base_path=/home/.../dino_bsmpc
+#   model_name=pickcube_comparison/bisim_baseline/seed_0
+#   -> .../dino_bsmpc/outputs/pickcube_comparison/bisim_baseline/seed_0/checkpoints/model_latest.pth
+
+hydra:
+  run:
+    dir: plan_outputs/${now:%Y%m%d%H%M%S}_${replace_slash:${model_name}}_gH${goal_H}
+  sweep:
+    dir: plan_outputs/${now:%Y%m%d%H%M%S}_${replace_slash:${model_name}}_gH${goal_H}
+    subdir: ${hydra.job.num}
+
+ckpt_base_path: .   # repo root that contains outputs/
+model_name: null
+model_epoch: latest
+
+seed: 99
+n_evals: 10
+# dset: sample init/goal from val trajectories (recommended for ManiSkill)
+# random_state: sample random env resets (harder; goal site is episode-specific)
+goal_source: dset
+goal_H: 5
+n_plot_samples: 4
+debug_dset_init: False
+
+objective:
+  _target_: planning.objectives.create_objective_fn
+  alpha: 1
+  base: 2
+  mode: last
+
+planner:
+  _target_: planning.mpc.MPCPlanner
+  max_iter: null
+  n_taken_actions: 5
+  sub_planner:
+    target: planning.cem.CEMPlanner
+    horizon: 5
+    topk: 20
+    num_samples: 200
+    var_scale: 1
+    opt_steps: 20
+    eval_every: 1
+  name: mpc_cem

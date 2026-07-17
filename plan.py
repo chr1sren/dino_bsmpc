@@ -9,7 +9,10 @@ import wandb
 import logging
 import warnings
 import numpy as np
-import submitit
+try:
+    import submitit
+except ImportError:  # local planning does not need SLURM/submitit
+    submitit = None
 from itertools import product
 from pathlib import Path
 from einops import rearrange
@@ -44,6 +47,11 @@ def launch_plan_jobs(
         cfg_dicts,
         plan_output_dir,
 ):
+    if submitit is None:
+        raise ImportError(
+            "submitit is required for launch_plan_jobs (SLURM sweeps). "
+            "For local planning, run: python plan.py --config-name plan_maniskill.yaml ..."
+        )
     with submitit.helpers.clean_env():
         jobs = []
         for cfg_dict in cfg_dicts:
