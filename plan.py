@@ -237,9 +237,11 @@ class PlanWorkspace:
 
             self.obs_0 = obs_0
             self.obs_g = obs_g
-            self.state_0 = rand_init_state  # (b, d)
-            self.state_g = rand_goal_state
+            # Use whatever the env actually restored (ManiSkill cannot teleport via 14-d state).
+            self.state_0 = state_0
+            self.state_g = state_g
             self.gt_actions = None
+            self._log_plan_target_stats()
         else:
             # update env config from val trajs
             observations, states, actions, env_info = (
@@ -267,9 +269,12 @@ class PlanWorkspace:
                 key: np.expand_dims(arr[:, -1], axis=1)
                 for key, arr in rollout_obses.items()
             }
-            self.state_0 = init_state  # (b, d)
-            self.state_g = rollout_states[:, -1]  # (b, d)
+            # CRITICAL: use the *actual* sim states after prepare/rollout, not the
+            # dataset vectors (ManiSkill prepare used to lie by overwriting state).
+            self.state_0 = rollout_states[:, 0]
+            self.state_g = rollout_states[:, -1]
             self.gt_actions = wm_actions
+            self._log_plan_target_stats()
 
     def sample_traj_segment_from_dset(self, traj_len):
         states = []
@@ -286,6 +291,12 @@ class PlanWorkspace:
         if len(valid_traj) == 0:
             raise ValueError("No trajectory in the dataset is long enough.")
 
+        # ManiSkill env_info only stores episode-start sim_state. Mid-traj offsets
+        # require replaying actions from t=0 (warmup). Default: start at offset 0.
+        dset_start_only = bool(self.cfg_dict.get("dset_start_only", False))
+        if self.env_name in ("pickcube", "pushcube"):
+            dset_start_only = bool(self.cfg_dict.get("dset_start_only", True))
+
         # sample init_states from dset
         for i in range(self.n_evals):
             max_offset = -1
@@ -294,18 +305,54 @@ class PlanWorkspace:
                 obs, act, state, e_info = self.dset[traj_id]
                 max_offset = obs["visual"].shape[0] - traj_len
             state = state.numpy()
-            offset = random.randint(0, max_offset)
+            act = act.numpy() if hasattr(act, "numpy") else np.asarray(act)
+            if dset_start_only:
+                offset = 0
+            else:
+                offset = random.randint(0, max_offset)
+
+            # Build env_info with optional warmup to reach mid-trajectory.
+            e_info = dict(e_info) if e_info is not None else {}
+            if offset > 0:
+                # act is normalized in dset; denormalize for env.step
+                warmup_norm = torch.as_tensor(act[:offset], dtype=torch.float32)
+                warmup = self.data_preprocessor.denormalize_actions(warmup_norm)
+                e_info["warmup_actions"] = warmup.numpy()
+            else:
+                e_info["warmup_actions"] = None
+
             obs = {
                 key: arr[offset: offset + traj_len]
                 for key, arr in obs.items()
             }
             state = state[offset: offset + traj_len]
-            act = act[offset: offset + self.frameskip * self.goal_H]
-            actions.append(act)
+            act_seg = act[offset: offset + self.frameskip * self.goal_H]
+            actions.append(torch.as_tensor(act_seg, dtype=torch.float32))
             states.append(state)
             observations.append(obs)
             env_info.append(e_info)
         return observations, states, actions, env_info
+
+    def _log_plan_target_stats(self):
+        """Print init/goal place_err so we catch empty goals / restore bugs early."""
+        if self.state_0 is None or self.state_g is None:
+            return
+        if self.state_0.shape[-1] < 13:
+            return
+        pe0 = np.linalg.norm(self.state_0[:, 7:10] - self.state_0[:, 10:13], axis=-1)
+        peg = np.linalg.norm(self.state_g[:, 7:10] - self.state_g[:, 10:13], axis=-1)
+        cube = np.linalg.norm(self.state_g[:, 7:10] - self.state_0[:, 7:10], axis=-1)
+        tcp = np.linalg.norm(self.state_g[:, :3] - self.state_0[:, :3], axis=-1)
+        print(
+            f"[plan targets] place_err init={float(pe0.mean()):.4f} "
+            f"goal={float(peg.mean()):.4f} (Δ={float((peg - pe0).mean()):.4f}) | "
+            f"cube_disp={float(cube.mean()):.4f} tcp_disp={float(tcp.mean()):.4f}"
+        )
+        if float(peg.mean()) > float(pe0.mean()) - 1e-3:
+            print(
+                "[plan targets] WARNING: goal segment does not reduce place_err. "
+                "Increase goal_H or check demo quality / state restore."
+            )
 
     def prepare_targets_from_file(self, file_path):
         with open(file_path, "rb") as f:
@@ -506,6 +553,23 @@ def planning_main(cfg_dict):
         background = cfg_dict.get("point_maze_env", {}).get("background")
         if background:
             env_kwargs["background"] = background
+
+    # MPC can exceed the training episode length; avoid early truncation.
+    if model_cfg.env.name in ("pickcube", "pushcube"):
+        goal_H = int(cfg_dict.get("goal_H", 5))
+        planner_cfg = cfg_dict.get("planner", {}) or {}
+        max_iter = planner_cfg.get("max_iter", 10)
+        max_iter = 10 if max_iter is None else int(max_iter)
+        n_taken = int(planner_cfg.get("n_taken_actions", goal_H) or goal_H)
+        frameskip = int(model_cfg.frameskip)
+        need_steps = max_iter * n_taken * frameskip + 10
+        env_kwargs["max_episode_steps"] = max(
+            int(env_kwargs.get("max_episode_steps", 50)), need_steps
+        )
+        print(
+            f"[plan] ManiSkill max_episode_steps={env_kwargs['max_episode_steps']} "
+            f"(MPC budget ~{max_iter * n_taken * frameskip} ctrl steps)"
+        )
 
     # use serial vector env for wall, deformable, and ManiSkill (SAPIEN/Vulkan)
     if model_cfg.env.name in ("wall", "deformable_env", "pickcube", "pushcube"):

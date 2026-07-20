@@ -54,6 +54,8 @@ class PickCubeWrapper:
         self._episode_seed = seed
         self._goal_pos = None
         self._sim_state = None
+        # Actions to replay after restoring episode-start sim_state (reach mid-traj).
+        self._warmup_actions = None
         # gym.make() assigns env.unwrapped.spec = spec; our wrapper is not a gym.Env
         # subclass, so expose these attributes so registration works.
         self.spec = None
@@ -109,11 +111,46 @@ class PickCubeWrapper:
         return obs, reward, done, info
 
     def prepare(self, seed, init_state, sim_state=None):
-        self.seed(seed)
-        self._sim_state = sim_state
+        """
+        Reset env to a controllable start for planning/rollout.
+
+        ManiSkill planning relies on ``env_info['sim_state']`` (episode start) plus
+        optional ``warmup_actions`` to reach a mid-trajectory frame. Unlike PushT,
+        the 14-d semantic ``init_state`` alone cannot restore full robot qpos — so
+        we must NEVER overwrite the returned state without applying it to the sim
+        (that bug made metrics report fake cube motion while the arm never contacted).
+
+        Also: do not clear ``_sim_state`` / ``_episode_seed`` from ``update_env`` when
+        ``sim_state is None`` — old code did, so every plan reset ignored the demo.
+        """
+        if sim_state is not None:
+            self._sim_state = sim_state
+
+        if self._sim_state is not None:
+            # Keep dataset episode seed so set_sim_state matches the recorded episode.
+            reset_seed = self._episode_seed if self._episode_seed is not None else seed
+            self._ms.seed(reset_seed)
+            self._episode_seed = reset_seed
+        else:
+            self.seed(seed)
+
         obs, state = self.reset()
+
+        warmup = self._warmup_actions
+        if warmup is not None and len(warmup) > 0:
+            for action in warmup:
+                obs, _, _, info = self.step(np.asarray(action, dtype=np.float32))
+                state = info["state"]
+
         if init_state is not None:
-            state = np.asarray(init_state, dtype=np.float32)
+            init_state = np.asarray(init_state, dtype=np.float32)
+            mismatch = float(np.linalg.norm(state - init_state))
+            if mismatch > 5e-2:
+                print(
+                    f"[PickCubeWrapper.prepare] WARNING: sim state differs from "
+                    f"requested init_state (L2={mismatch:.4f}). Using real sim state. "
+                    f"Check sim_state restore / warmup_actions / dset offset."
+                )
         return obs, state
 
     def step_multiple(self, actions):
@@ -164,6 +201,9 @@ class PickCubeWrapper:
             self._goal_pos = np.asarray(env_info['goal_pos'], dtype=np.float32)
         if 'sim_state' in env_info and env_info['sim_state'] is not None:
             self._sim_state = np.asarray(env_info['sim_state'])
+        if 'warmup_actions' in env_info:
+            wa = env_info['warmup_actions']
+            self._warmup_actions = None if wa is None else np.asarray(wa, dtype=np.float32)
 
     def sample_random_init_goal_states(self, seed):
         rs = np.random.RandomState(seed)

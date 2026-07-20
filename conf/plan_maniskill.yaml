@@ -29,10 +29,15 @@ goal_source: dset
 goal_H: 5
 n_plot_samples: 1
 debug_dset_init: False
+# ManiSkill env_info only has episode-start sim_state — keep offsets at 0 unless
+# you also set warmup_actions (plan.py can build them when dset_start_only=false).
+dset_start_only: true
 
 objective:
   _target_: planning.objectives.create_objective_fn
-  alpha: 1
+  # Push/Pick success is object placement; heavy proprio matching makes CEM chase
+  # the demo arm pose and ignore the cube. Prefer visual (alpha small).
+  alpha: 0.1
   base: 2
   mode: last
 
@@ -43,9 +48,9 @@ planner:
   sub_planner:
     target: planning.cem.CEMPlanner
     horizon: 5
-    topk: 20
-    num_samples: 200
+    topk: 30
+    num_samples: 300
     var_scale: 1
-    opt_steps: 20
+    opt_steps: 30
     eval_every: 1
   name: mpc_cem
