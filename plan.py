@@ -178,6 +178,8 @@ class PlanWorkspace:
             seed=self.eval_seed,
             preprocessor=self.data_preprocessor,
             n_plot_samples=self.cfg_dict["n_plot_samples"],
+            success_mode=self.cfg_dict.get("success_mode", "place_site"),
+            success_thresh=float(self.cfg_dict.get("success_thresh", 0.025)),
         )
 
         if self.wandb_run is None or isinstance(
@@ -353,6 +355,14 @@ class PlanWorkspace:
                 "[plan targets] WARNING: goal segment does not reduce place_err. "
                 "Increase goal_H or check demo quality / state restore."
             )
+        thresh = float(self.cfg_dict.get("success_thresh", 0.025))
+        mode = self.cfg_dict.get("success_mode", "place_site")
+        if mode == "place_site" and float(peg.mean()) >= thresh:
+            print(
+                f"[plan targets] WARNING: goal place_err={float(peg.mean()):.4f} ≥ "
+                f"success_thresh={thresh}. Even perfect CEM matching obs_g cannot "
+                f"get place_site success. Use success_mode=goal_state or larger goal_H."
+            )
 
     def prepare_targets_from_file(self, file_path):
         with open(file_path, "rb") as f:
@@ -380,16 +390,61 @@ class PlanWorkspace:
         file_path = os.path.abspath("plan_targets.pkl")
         print(f"Dumped plan targets to {file_path}")
 
-    def perform_planning(self):
-        if self.debug_dset_init:
-            actions_init = self.gt_actions
-        else:
-            actions_init = None
-        actions, action_len = self.planner.plan(
-            obs_0=self.obs_0,
-            obs_g=self.obs_g,
-            actions=actions_init,
+    def _probe_gt_openloop(self):
+        """
+        Roll out dataset actions with the same WM/env interface used by CEM.
+        If this WM error is tiny but CEM planning fails → planner/objective issue.
+        If this WM error is already huge → action/obs interface bug (not 'val loss').
+        """
+        if self.gt_actions is None:
+            print("[GT probe] skipped (no gt_actions; goal_source may be random_state)")
+            return None
+        print("[GT probe] evaluating dataset actions (no CEM) ...")
+        actions = self.gt_actions.detach().to(self.device)
+        action_len = np.full(actions.shape[0], np.inf)
+        logs, successes, _, _ = self.evaluator.eval_actions(
+            actions,
+            action_len,
+            filename="gt_probe",
+            save_video=True,
         )
+        print(
+            f"[GT probe] success={float(np.mean(np.asarray(successes).astype(float))):.3f} | "
+            f"place_err={logs.get('mean_place_err', float('nan')):.4f} | "
+            f"cube_disp={logs.get('cube_disp', float('nan')):.4f} | "
+            f"wm_vis_mse={logs.get('wm_openloop_visual_mse', float('nan')):.4f} | "
+            f"wm_pro_mse={logs.get('wm_openloop_proprio_mse', float('nan')):.4f} | "
+            f"hint={logs.get('diag_hint', '?')}"
+        )
+        logs = {f"gt_probe/{k}": v for k, v in logs.items()}
+        logs["step"] = 0
+        self.wandb_run.log(logs)
+        with open(self.log_filename, "a") as file:
+            file.write(json.dumps({k: (float(v) if hasattr(v, "item") else v) for k, v in logs.items()}, default=str) + "\n")
+        return logs
+
+    def perform_planning(self):
+        # Always separate "is the WM/env interface OK on demo actions?" from CEM.
+        self._probe_gt_openloop()
+
+        if self.debug_dset_init:
+            # IMPORTANT: previously this only *initialized* CEM with GT; CEM still
+            # optimized and overwrote the demo. True oracle = skip planner entirely.
+            if self.gt_actions is None:
+                raise ValueError("debug_dset_init=True requires goal_source=dset (gt_actions).")
+            print(
+                "[plan] debug_dset_init=True → GT-only oracle "
+                "(skipping CEM/MPC entirely)"
+            )
+            actions = self.gt_actions.detach().to(self.device)
+            action_len = np.full(actions.shape[0], np.inf)
+        else:
+            actions, action_len = self.planner.plan(
+                obs_0=self.obs_0,
+                obs_g=self.obs_g,
+                actions=None,
+            )
+
         logs, successes, _, _ = self.evaluator.eval_actions(
             actions.detach(), action_len, save_video=True, filename="output_final"
         )
@@ -517,6 +572,22 @@ class DummyWandbRun:
         pass
 
 
+def _resolve_ckpt_base_path(ckpt_base_path):
+    """
+    Resolve checkpoint root. Hydra chdirs into plan_outputs/... so a relative
+    ``ckpt_base_path=.`` must be interpreted against the *launch* cwd, not the
+    run dir (otherwise ``./outputs/.../hydra.yaml`` is missing).
+    """
+    path = os.path.expanduser(str(ckpt_base_path))
+    if os.path.isabs(path):
+        return path
+    try:
+        orig = hydra.utils.get_original_cwd()
+    except Exception:
+        orig = os.getcwd()
+    return os.path.abspath(os.path.join(orig, path))
+
+
 def planning_main(cfg_dict):
     output_dir = cfg_dict["saved_folder"]
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -528,9 +599,18 @@ def planning_main(cfg_dict):
     else:
         wandb_run = None
 
-    ckpt_base_path = cfg_dict["ckpt_base_path"]
-    model_path = f"{ckpt_base_path}/outputs/{cfg_dict['model_name']}/"
-    with open(os.path.join(model_path, "hydra.yaml"), "r") as f:
+    ckpt_base_path = _resolve_ckpt_base_path(cfg_dict["ckpt_base_path"])
+    cfg_dict["ckpt_base_path"] = ckpt_base_path
+    model_path = os.path.join(ckpt_base_path, "outputs", cfg_dict["model_name"])
+    hydra_yaml = os.path.join(model_path, "hydra.yaml")
+    if not os.path.isfile(hydra_yaml):
+        raise FileNotFoundError(
+            f"Missing training config: {hydra_yaml}\n"
+            f"  ckpt_base_path={ckpt_base_path}\n"
+            f"  Pass an absolute path, e.g. "
+            f"ckpt_base_path=/home/medcvr/Documents/chris/dino_bsmpc"
+        )
+    with open(hydra_yaml, "r") as f:
         model_cfg = OmegaConf.load(f)
 
     seed(cfg_dict["seed"])
@@ -612,7 +692,9 @@ def main(cfg: OmegaConf):
         cfg["saved_folder"] = os.getcwd()
         log.info(f"Planning result saved dir: {cfg['saved_folder']}")
     cfg_dict = cfg_to_dict(cfg)
-    cfg_dict["wandb_logging"] = True
+    # Honor WANDB_MODE=disabled for local debug runs.
+    wandb_mode = os.environ.get("WANDB_MODE", "").lower()
+    cfg_dict["wandb_logging"] = wandb_mode not in ("disabled", "offline_dry_run")
     planning_main(cfg_dict)
 
 

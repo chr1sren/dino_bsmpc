@@ -28,6 +28,8 @@ class PlanEvaluator:  # evaluator for planning
             seed,
             preprocessor,
             n_plot_samples,
+            success_mode="place_site",
+            success_thresh=0.025,
     ):
         self.obs_0 = obs_0
         self.obs_g = obs_g
@@ -41,6 +43,10 @@ class PlanEvaluator:  # evaluator for planning
         self.n_plot_samples = n_plot_samples
         self.device = next(wm.parameters()).device
         self.plot_full = False  # plot all frames or frames after frameskip
+        # place_site: ||cube - goal_site|| (ManiSkill task success)
+        # goal_state: ||cube - state_g.cube|| (matches short-horizon dset goals)
+        self.success_mode = success_mode
+        self.success_thresh = float(success_thresh)
 
     def assign_init_cond(self, obs_0, state_0):
         self.obs_0 = obs_0
@@ -282,6 +288,24 @@ class PlanEvaluator:  # evaluator for planning
         exec_actions=None,
     ):
         eval_results = self.env.eval_state(self.state_g, e_state)
+        # Optional: success = match planned goal state's cube (fair for short goal_H)
+        if self.success_mode == "goal_state" and self.state_g is not None:
+            cur = np.asarray(e_state)
+            tgt = np.asarray(self.state_g)
+            if cur.ndim == 1:
+                cur = cur[None, ...]
+                tgt = tgt[None, ...]
+            goal_obj_err = np.linalg.norm(cur[:, 7:10] - tgt[:, 7:10], axis=-1)
+            eval_results = dict(eval_results)
+            eval_results["goal_obj_err"] = goal_obj_err
+            eval_results["success"] = goal_obj_err < self.success_thresh
+            # keep place_err as site distance for diagnostics
+        elif self.success_mode == "place_site":
+            # Re-threshold with configurable thresh if env used a fixed one
+            pe = np.asarray(eval_results["place_err"])
+            eval_results = dict(eval_results)
+            eval_results["success"] = pe < self.success_thresh
+
         successes = eval_results['success']
 
         logs = {

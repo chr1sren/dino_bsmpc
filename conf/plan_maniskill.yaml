@@ -5,10 +5,13 @@ defaults:
 # Checkpoints are loaded from:
 #   ${ckpt_base_path}/outputs/${model_name}/checkpoints/model_${model_epoch}.pth
 #
-# Example:
-#   ckpt_base_path=/home/.../dino_bsmpc
-#   model_name=pickcube_comparison/bisim_baseline/seed_0
-#   -> .../dino_bsmpc/outputs/pickcube_comparison/bisim_baseline/seed_0/checkpoints/model_latest.pth
+# Example (from dino_bsmpc/):
+#   export WANDB_MODE=disabled
+#   python plan.py --config-name plan_maniskill.yaml \
+#     model_name=pushcube_comparison/bisim_baseline/seed_0 \
+#     debug_dset_init=true n_evals=1
+#
+# Relative ckpt_base_path=. is resolved against the launch cwd (not Hydra's run dir).
 
 hydra:
   run:
@@ -17,7 +20,7 @@ hydra:
     dir: plan_outputs/${now:%Y%m%d%H%M%S}_${replace_slash:${model_name}}_gH${goal_H}
     subdir: ${hydra.job.num}
 
-ckpt_base_path: .   # repo root that contains outputs/
+ckpt_base_path: .   # repo root that contains outputs/ (relative to launch cwd)
 model_name: null
 model_epoch: latest
 
@@ -32,6 +35,11 @@ debug_dset_init: False
 # ManiSkill env_info only has episode-start sim_state — keep offsets at 0 unless
 # you also set warmup_actions (plan.py can build them when dset_start_only=false).
 dset_start_only: true
+# place_site: ManiSkill task success (cube → red goal). Needs long enough goal_H
+#   that the dset segment actually reaches the site — else even GT gets SR=0.
+# goal_state: success if cube matches state_g (fair for short-horizon CEM).
+success_mode: goal_state
+success_thresh: 0.025
 
 objective:
   _target_: planning.objectives.create_objective_fn
