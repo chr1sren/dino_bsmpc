@@ -692,6 +692,15 @@ def planning_main(cfg_dict):
     )
 
     logs = plan_workspace.perform_planning()
+    try:
+        if hasattr(env, "close"):
+            env.close()
+        elif hasattr(env, "envs"):
+            for e in env.envs:
+                if hasattr(e, "close"):
+                    e.close()
+    except Exception as exc:
+        print(f"[plan] env.close() raised {exc!r} (often harmless)")
     return logs
 
 

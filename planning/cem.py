@@ -118,6 +118,25 @@ class CEMPlanner(BasePlanner):
             # Tight exploration around a known-good init (e.g. dataset actions).
             sigma = torch.clamp(sigma * 0.25, min=self.sigma_min)
 
+            # If warm-start already solves the env goal, do NOT run CEM.
+            # Visual embedding loss is aliased (lower imagined loss can mean
+            # "don't touch the cube"); optimizing would destroy a good plan.
+            if self.evaluator is not None:
+                init_logs, init_successes, _, _ = self.evaluator.eval_actions(
+                    mu, filename=f"{self.logging_prefix}_init_env"
+                )
+                print(
+                    f"[CEM] {self.logging_prefix} init env success="
+                    f"{float(np.mean(np.asarray(init_successes).astype(float))):.3f} "
+                    f"cube_disp={init_logs.get('cube_disp', float('nan')):.4f}"
+                )
+                if np.all(init_successes):
+                    print(
+                        f"[CEM] {self.logging_prefix} warm-start already succeeds — "
+                        f"skipping CEM optimization (prevents objective aliasing)"
+                    )
+                    return mu, np.full(n_evals, np.inf)
+
         for i in range(self.opt_steps):
             # optimize individual instances
             losses = []
