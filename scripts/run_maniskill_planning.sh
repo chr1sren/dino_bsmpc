@@ -15,6 +15,7 @@
 #   N_EVALS=1
 #   GOAL_H=5
 #   GOAL_SOURCE=dset
+#   CEM_INIT=gt          # gt | zero  (gt = warm-start first CEM from demo actions)
 #   MODEL_EPOCH=latest
 #   CKPT_BASE=.               # repo root containing outputs/
 #   OUT_ROOT=plan_outputs/maniskill_eval
@@ -34,6 +35,7 @@ SEEDS="${SEEDS:-0 1 2}"
 N_EVALS="${N_EVALS:-1}"
 GOAL_H="${GOAL_H:-5}"
 GOAL_SOURCE="${GOAL_SOURCE:-dset}"
+CEM_INIT="${CEM_INIT:-gt}"
 MODEL_EPOCH="${MODEL_EPOCH:-latest}"
 OUT_ROOT="${OUT_ROOT:-${ROOT}/plan_outputs/maniskill_eval}"
 export DATASET_DIR
@@ -125,6 +127,7 @@ for TASK in ${TASKS}; do
         "n_evals=${N_EVALS}" \
         "goal_H=${GOAL_H}" \
         "goal_source=${GOAL_SOURCE}" \
+        "cem_init=${CEM_INIT}" \
         "hydra.run.dir=${PLAN_DIR}" \
         > "${PLAN_LOG}" 2>&1
       rc=$?

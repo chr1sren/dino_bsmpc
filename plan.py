@@ -439,10 +439,19 @@ class PlanWorkspace:
             actions = self.gt_actions.detach().to(self.device)
             action_len = np.full(actions.shape[0], np.inf)
         else:
+            cem_init = str(self.cfg_dict.get("cem_init", "zero")).lower()
+            actions_init = None
+            if cem_init in ("gt", "demo", "warmstart") and self.gt_actions is not None:
+                actions_init = self.gt_actions.detach().to(self.device)
+                print(
+                    f"[plan] cem_init={cem_init} → warm-start first CEM from dataset actions"
+                )
+            elif cem_init in ("gt", "demo", "warmstart"):
+                print(f"[plan] cem_init={cem_init} requested but gt_actions is None; using zero init")
             actions, action_len = self.planner.plan(
                 obs_0=self.obs_0,
                 obs_g=self.obs_g,
-                actions=None,
+                actions=actions_init,
             )
 
         logs, successes, _, _ = self.evaluator.eval_actions(

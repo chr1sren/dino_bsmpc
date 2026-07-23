@@ -32,6 +32,10 @@ goal_source: dset
 goal_H: 5
 n_plot_samples: 1
 debug_dset_init: False
+# zero: CEM from scratch (hard; visual goal is aliased without contact)
+# gt: warm-start first CEM from dataset actions (tests whether CEM preserves a
+#     known-good plan; should be near GT probe if objective is well-behaved)
+cem_init: gt
 # ManiSkill env_info only has episode-start sim_state — keep offsets at 0 unless
 # you also set warmup_actions (plan.py can build them when dset_start_only=false).
 dset_start_only: true
@@ -43,22 +47,28 @@ success_thresh: 0.025
 
 objective:
   _target_: planning.objectives.create_objective_fn
-  # Push/Pick success is object placement; heavy proprio matching makes CEM chase
-  # the demo arm pose and ignore the cube. Prefer visual (alpha small).
-  alpha: 0.1
+  # GT probe shows WM is fine; CEM previously chased proprio/arm pose and never
+  # contacted the cube. Visual-only matching (alpha=0) is the DINO-WM default.
+  alpha: 0
   base: 2
   mode: last
 
 planner:
   _target_: planning.mpc.MPCPlanner
-  max_iter: 10   # hard stop; null = loop forever until success (dangerous when SR=0)
+  # Long open-loop concat of bad early plans blew place_err to >2. Prefer fewer
+  # receding-horizon steps once warm-start / CEM works.
+  max_iter: 3
   n_taken_actions: 5
   sub_planner:
     target: planning.cem.CEMPlanner
     horizon: 5
-    topk: 30
-    num_samples: 300
-    var_scale: 1
-    opt_steps: 30
-    eval_every: 1
+    topk: 40
+    num_samples: 400
+    var_scale: 1.0
+    opt_steps: 40
+    eval_every: 5
+    sigma_min: 0.05
+    sigma_decay: 0.97
+    action_clip: 3.0
+    smooth_coef: 0.01
   name: mpc_cem

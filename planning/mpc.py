@@ -71,7 +71,9 @@ class MPCPlanner(BasePlanner):
 
     def plan(self, obs_0, obs_g, actions=None):
         """
-        actions is NOT used
+        Args:
+            actions: optional normalized warm-start for the first CEM call
+                     (e.g. dataset actions). Used once, then MPC continues.
         Returns:
             actions: (B, T, action_dim) torch.Tensor
         """
@@ -81,7 +83,8 @@ class MPCPlanner(BasePlanner):
         init_obs_0, init_state_0 = self.evaluator.get_init_cond()
 
         cur_obs_0 = obs_0
-        memo_actions = None
+        # Warm-start first CEM from provided actions (was previously ignored).
+        memo_actions = actions
         while not np.all(self.is_success) and self.iter < self.max_iter:
             self.sub_planner.logging_prefix = f"plan_{self.iter}"
             actions, _ = self.sub_planner.plan(
@@ -91,7 +94,9 @@ class MPCPlanner(BasePlanner):
             )  # (b, t, act_dim)
             taken_actions = actions.detach()[:, : self.n_taken_actions]
             self._apply_success_mask(taken_actions)
-            memo_actions = actions.detach()[:, self.n_taken_actions :]
+            # After the first iter, do not keep shifting a stale warm-start tail;
+            # replan from scratch each time (standard MPC).
+            memo_actions = None
             self.planned_actions.append(taken_actions)
 
             print(f"MPC iter {self.iter} Eval ------- ")

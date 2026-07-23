@@ -22,6 +22,10 @@ class CEMPlanner(BasePlanner):
             wandb_run,
             logging_prefix="plan_0",
             log_filename="logs.json",
+            sigma_min=0.05,
+            sigma_decay=0.95,
+            action_clip=3.0,
+            smooth_coef=0.0,
             **kwargs,
     ):
         super().__init__(
@@ -40,6 +44,10 @@ class CEMPlanner(BasePlanner):
         self.opt_steps = opt_steps
         self.eval_every = eval_every
         self.logging_prefix = logging_prefix
+        self.sigma_min = float(sigma_min)
+        self.sigma_decay = float(sigma_decay)
+        self.action_clip = float(action_clip)
+        self.smooth_coef = float(smooth_coef)
 
     def init_mu_sigma(self, obs_0, actions=None):
         """
@@ -87,6 +95,28 @@ class CEMPlanner(BasePlanner):
         mu, sigma = self.init_mu_sigma(obs_0, actions)
         mu, sigma = mu.to(self.device), sigma.to(self.device)
         n_evals = mu.shape[0]
+        best_mu = mu.clone()
+        best_loss = torch.full((n_evals,), float("inf"), device=self.device)
+
+        # Reference: imagined objective of the warm-start / GT actions (if any).
+        # If CEM later reports lower loss but worse real cube_disp → objective aliasing.
+        if actions is not None:
+            with torch.no_grad():
+                ref_loss = self.objective_fn(
+                    self.wm.rollout(obs_0=trans_obs_0, act=mu)[0],
+                    z_obs_g,
+                )
+            ref_mean = float(ref_loss.mean().item())
+            print(
+                f"[CEM] {self.logging_prefix} imagined loss of init actions: "
+                f"{ref_mean:.4f} (compare to CEM elite loss below)"
+            )
+            self.wandb_run.log(
+                {f"{self.logging_prefix}/init_action_imagined_loss": ref_mean, "step": 0}
+            )
+            best_loss = ref_loss.detach().clone()
+            # Tight exploration around a known-good init (e.g. dataset actions).
+            sigma = torch.clamp(sigma * 0.25, min=self.sigma_min)
 
         for i in range(self.opt_steps):
             # optimize individual instances
@@ -111,7 +141,9 @@ class CEMPlanner(BasePlanner):
                         * sigma[traj]
                         + mu[traj]
                 )
-                action[0] = mu[traj]  # optional: make the first one mu itself
+                action[0] = mu[traj]  # keep current mean as a candidate
+                if self.action_clip is not None and self.action_clip > 0:
+                    action = torch.clamp(action, -self.action_clip, self.action_clip)
                 with torch.no_grad():
                     rollout_result = self.wm.rollout(
                         obs_0=cur_trans_obs_0,
@@ -120,17 +152,31 @@ class CEMPlanner(BasePlanner):
                     i_z_obses, i_zs = rollout_result
 
                 loss = self.objective_fn(i_z_obses, cur_z_obs_g)
+                if self.smooth_coef > 0 and action.shape[1] > 1:
+                    smooth = ((action[:, 1:] - action[:, :-1]) ** 2).mean(dim=(1, 2))
+                    loss = loss + self.smooth_coef * smooth
                 topk_idx = torch.argsort(loss)[: self.topk]
                 topk_action = action[topk_idx]
-                losses.append(loss[topk_idx[0]].item())
+                elite_loss = loss[topk_idx[0]].item()
+                losses.append(elite_loss)
                 mu[traj] = topk_action.mean(dim=0)
-                sigma[traj] = topk_action.std(dim=0)
+                # std can be 0/NaN if elites collapse — keep a decaying exploration floor
+                emp_std = topk_action.std(dim=0, unbiased=False)
+                emp_std = torch.nan_to_num(emp_std, nan=self.var_scale)
+                floor = max(
+                    self.sigma_min,
+                    self.var_scale * (self.sigma_decay ** (i + 1)),
+                )
+                sigma[traj] = torch.clamp(emp_std, min=floor)
+                if elite_loss < best_loss[traj].item():
+                    best_loss[traj] = elite_loss
+                    best_mu[traj] = mu[traj].detach().clone()
             self.wandb_run.log(
                 {f"{self.logging_prefix}/loss": np.mean(losses), "step": i + 1}
             )
             if self.evaluator is not None and i % self.eval_every == 0:
                 logs, successes, _, _ = self.evaluator.eval_actions(
-                    mu, filename=f"{self.logging_prefix}_output_{i + 1}"
+                    best_mu, filename=f"{self.logging_prefix}_output_{i + 1}"
                 )
                 logs = {f"{self.logging_prefix}/{k}": v for k, v in logs.items()}
                 logs.update({"step": i + 1})
@@ -139,4 +185,4 @@ class CEMPlanner(BasePlanner):
                 if np.all(successes):
                     break  # terminate planning if all success
 
-        return mu, np.full(n_evals, np.inf)  # all actions are valid
+        return best_mu, np.full(n_evals, np.inf)  # all actions are valid
